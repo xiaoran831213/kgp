@@ -1,5 +1,5 @@
 # kgp
-1000 Genome Project (KGP0 related works
+1000 Genome Project (KGP) related works
 
 The 1000 Genomes Project, launched in January 2008, was an international research effort to establish by far the most detailed catalogue of human genetic variation. -- https://www.internationalgenome.org
 
