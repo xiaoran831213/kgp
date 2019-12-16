@@ -1,0 +1,129 @@
+---
+title: "1,000 Genome: European samples"
+author: "Xiaoran Tong"
+output: "html_document"
+---
+
+Extract European samples from 1,000 Genome variant call data, convert
+the data to PLINK format, and merge into a single genome.
+
+This is part of the pre-requisit for __ldpred__ that requires a high
+quality LD reference.
+
+# Preparation
+
+The operation should be done after annotating the main data with the
+latest dbSNP build, see __{p}/src/ann.Rmd__ or __ann.html__ for more
+details.
+
+The annotated data in __{p}/raw/002__ should be ready.
+
+The 1,000 genome panel information should also be downloaded from
+[ebi](ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/)
+which provide the origin of each sample. 
+
+The panel info is saved as __{p}/raw/000.pnl__.
+
+Notation: {p} stands for the root directory of the 1000 genome data.
+
+# Extraction
+
+Query panel info __{p}/raw/000.pnl__ for ID of Europeans, extract
+these samples from annotated genotype under __{p}/raw/002__, and save
+the output to __{p}/eur/000__.
+
+In the mean time, preserve only single nucleotide polymorphism (SNP).
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p               # project directory
+s=raw/002						# annotated genotype
+d=eur/000; mkdir -p $d			# European samples
+i=raw/000.pnl					# panel information
+
+# 1) exam the panel infomation
+head -n 1 $i | expand -t12; shuf -n 10 $i | expand -t 12
+
+# 2) filter out European samples
+grep EUR $i    > $d.pnl			# panel for Europeans
+cut -f1 $d.pnl > $d.sid			# subject id
+
+# 3) extract genotype, retain only SNP.
+cp $d.sid $d/sid
+for i in {01..26}; do
+    [ -e $s/$i.vcf.gz ] || continue # skip non-existing chromosome
+    echo "bcftools view $s/$i.vcf.gz -S sid -v snps -Oz -o $i.vcf.gz"
+    echo "bcftools index -t $i.vcf.gz"
+done > /tmp/cmd.sh
+head -n 2 /tmp/cmd.sh; echo ...; tail -n 2 /tmp/cmd.sh
+# hpcwp /tmp/cmd.sh -d$d -q2 --wtm 4 --log None
+# $d/sub.sh
+```
+
+Here we use __hpcwp__ to create 25 parallel jobs and submit them to
+MSU HPCC's SLURM system. To directly execute the commands one by one
+however, use __sh /tmp/cmd.sh__ instead.
+
+When done, 25 chromosome file in VCF4.0 format should appear under
+__{p}/eur/000__, containting samples of European ancestry.
+
+# Coversion
+
+Convert extracted chromosome files under __{p}/eur/000___ into PLINK
+format, and merge into a single, continuous genome.
+
+Merging by PLINK is usually trouble some, but since the SNP ID have
+been corrected by the latest dbSNP (see __{p}/src/ann.Rmd__ or
+ann.html for detail), this should not be a problem.
+
+```{sh, eval=FALSE}
+p=$GRP/1kg; cd $p               # project directory
+s=eur/000						# European samples
+d=eur/000						# output in the same folder
+
+for f in $s/*.vcf.gz; do		# generate commands
+    v=${f##*/}
+    c=${v%%.*}
+    echo -n "plink --vcf $v --snps-only just-acgt --keep-allele-order "
+    echo    "--biallelic-only strict --make-bed --out $c --memory 4096"
+done > /tmp/cmd.sh
+head -n 2 /tmp/cmd.sh; echo ...; tail -n 2 /tmp/cmd.sh
+# hpcwp /tmp/cmd.sh -d$d -q1 -t1 -m8 --log None
+# $d/sub.sh
+```
+
+Explanation:
+
+  * plink1.x by default set minor allele as A1 and major allele as A2,
+    use _--keep-allele-order_ to preserve original allele order;
+  * _--snps-only just-acgt_ exclude non-standard variation such as
+  indel and copy number variation;
+  * _--biallelic-only strict_ omit SNP with 2 or more alternative
+  alleles, which help to minimize "merging headache".
+
+# Merge
+
+From the previous step, take chrosome files in PLINK format and merge
+them into a single genome data.
+
+For now we ignore the Y chromosome, since half of the samples (female)
+are considered missing.
+
+```{sh, eval=FALSE}
+p=$GRP/1kg; cd $p               # project directory
+s=eur/000						# chromosome directory
+d=eur/000						# output name
+
+# list chromosome files without surfix, skip 24 (Y)
+for i in $s/*.bed; do echo ${i%%.*}; done | grep -v 24 > $d.lst
+
+# merge by plink
+plink --merge-list $d.lst --make-bed --keep-allele-order --out $d
+```
+
+When done, a merged genotype __{p}/eur/000__ should appear, in PLINK
+format.
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p               # project directory
+ls -lh eur/000.{bed,bim,fam}
+```

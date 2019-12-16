@@ -1,0 +1,364 @@
+---
+title: "1000 Genome: annotate SNP ID"
+author: "Xiaoran Tong"
+output: "html_document"
+---
+
+# Problem
+
+In the latest 1000 genome variant calling (version 5, based on human
+reference genome build 37), some SNP at different position, even in
+different chromosomes, were mistakenly assigned the same RS ID.
+
+Replicated ID become an issue in later analytical works, besides the
+loss of information due to quality control removing these uncertainty.
+For example, it causes "merge headache" when using PLINK to combine
+chromosome files into a single genome, when the same ID appeared in
+more than one chromosome.
+
+By annotating the SNP with the latest dbSNP build, these mistakes may
+be corrected.
+
+# Preperation
+
+Make sure **bcftools** is either loaded via "module load" or
+installed, and directly accessible from the command line.
+
+The latest 1000 genome variant call (phase 3, version 5) based on
+reference genome build 37 (GRCh37), has been download from
+[ebi](ftp://ftp.1000genomes.ebi.ac.uk/vol1/ftp/release/20130502/) to
+__{p}/raw/000__, where {p} denote the root directory for 1000 genome
+based works.
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project dir
+ls -lh raw/000/*.gz				# show downloads
+```
+
+The downloads are organized by chromosome, where 23, 24 and 26
+corresponds to X, Y, and MT (mitochondrion).
+
+Note: environment variable __\$GRP__ store the root directory of our
+research group, assigned by HPCC MSU.
+
+# Get dbSNP build
+
+Download the latest dbSNP build release **SNP153** from
+[NCBI](ftp://ftp.ncbi.nih.gov/snp/latest_release/VCF), for human
+reference genome build 37 (GRCh37), and the latest build 38.  All
+dbSNP downloads will be put under __{p}/raw/snp__.
+
+```{sh, eval=FALSE}
+p=$GRP/1kg; cd $p				# project directory
+w=$p/raw/snp; mkdir -p $w       # working directory
+cd $w
+
+# FPT root directory for dbSNP
+ftp=ftp://ftp.ncbi.nih.gov/snp/latest_release/VCF
+
+# for reference human genome sequence build 37 (hg19/GRCh37)
+wget $fpt/GCF_000001405.25.gz
+wget $fpt/GCF_000001405.25.gz.md5
+wget $fpt/GCF_000001405.25.gz.tbi
+wget $fpt/GCF_000001405.25.gz.tbi.md5
+
+# for reference human genome sequence build 38 (hg38/GRCh38)
+wget $fpt/GCF_000001405.38.gz
+wget $fpt/GCF_000001405.38.gz.md5
+wget $fpt/GCF_000001405.38.gz.tbi
+wget $fpt/GCF_000001405.38.gz.tbi.md5
+
+## check file integraty, should return OK for all.
+md5sum -c *.md5
+```
+
+In case of 1000 genome p3v5 aligned to GRCh37, we should use the first
+set of dbSNP files (**GCF_000001405.25**) for annotation.
+
+Although GRCh38 is now popular, the vast majority of our GWAS projects
+are based on SNP called on GRCh37. In this particular note, we will use
+GRCh37 as an example.
+
+# Process dbSNP build
+
+Take **SNP153** for GRCh37 as an example, as a VCF4.x (variant call
+format) file, it can be treated as a text file compressed by **gzip**.
+
+First, exam the header of build file **GCF_000001405.25**:
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project dir
+w=raw/snp;  cd $w				# working dir
+zcat GCF_000001405.25.gz | head -n 6
+```
+
+The frist few lines in the build file should assure us the build
+number is **153**, and the underlying reference genome is indeed
+**GRCh37**.
+
+Explanation:
+
+  * __zcat \${f}__ take gzipped file {f} as input, pipe decompressed
+    content to standard output (stdout);
+  * __| head -n 8__ receive content from standard input (stdin), pipe
+    the first 8 lines into standard output (stdout);
+  * there is no more command to receive the content, which is flushed
+    to the screen.
+
+Next, exam a few records of SNP build file **GCF_000001405.25**:
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project dir
+w=raw/snp;  cd $w				# working dir
+zcat GCF_000001405.25.gz |
+	sed -n '/^#CHROM/,//p' | head -n 8 | cut -f1-5 | column -t
+```
+
+Explanation:
+
+  * __zcat ${f}__: (the same);
+  * __| sed -n '/^#CHROM/,//p'__: receive content from stdin, and pass
+   it to stdout, but skip the lines before "#CHROM";
+  * __| head -n 8__: (the same);
+  * __| cut -f1-5__: receive content from stdin, cut out column 1 to 5
+  and pipe it into stdout;
+  * __| column -t__: receive content from stdin, expand the TAB(s)
+  into proper number of white spaces and pipe it into stdout;
+  * no more command to receive the content, flushed it to screen.
+  
+A problem is exposed here, that the chromosome is not written in
+numeric format like 1 .. 22, 23, etc, but in Refseq ID format:
+__{TYPE}_{ACCESSION}.{VERSION}__. 
+
+Before using the dbSNP build for annotation, the RefSeq IDs should be
+converted to numeric chromosome numbers. First, summarize Refseq IDs
+occured in the SNP build file:
+
+```{sh, eval=FALSE}
+p=$GRP/1kg; cd $p				# project dir
+w=raw/snp;  cd $w				# working dir
+bcftools query -f '%CHROM\n' GCF_000001405.25.gz | sort | uniq -c > rsq.txt
+```
+
+Explanation:
+
+  * __bcftools query -f '%CHROM\n' {f}__: take {f} as an input, query
+    the chromosome of each variant, and send result to stdout;
+  * __| sort__: received content from stdin, pipe sorted content to
+    stdout;
+  * __| uniq -c__: receive content from stdin, count the occurrence of
+    uniqe lines, and send the report to stdout;
+  * __> rsq.txt__: instead of flushing the content to screen, flush it
+  to file __rsq.txt__.
+  
+Note: 
+
+  * **uniq** must preceeded by **sort**.
+  * going through the dbSNP build (14GB in size) is time consuming,
+    therefore we save the report to a file.
+
+Next, exam the Refseq counts in __"rsq.txt"__:
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project dir
+w=raw/snp;  cd $w				# working dir
+head -n 30 rsq.txt              # show the first 30 lines
+```
+The first 25 Refseq ID starting with "NC" corresponds to chromosome 1
+.. 22, X, Y, and MT (mitochondrion), varifiable by directly searching
+these accession numbers on [NCBI](https://www.ncbi.nlm.nih.gov/); the
+non-zero digits in the accession numbers are actual chromosome number
+1 .. 24,  execpt 12920 which means 26 -- MT.
+
+Rest of the sequences (Refseq ID starting with "NT"), are not part of
+any assembled chromosome, and should be discarded for now.
+
+Before coverting Refseq ID in  dbSNP file **GCF_000001405.25.gz**, test
+the operation  on previousely summerized RefSeq ID counts **rsq.txt**:
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project dir
+w=raw/snp;  cd $w				# working dir
+awk <rsq.txt '{print $2}' | 	# test
+    sed -rn '/^NC/s/^NC_0*([0-9]*)[.][0-9]*/\1/;s/^12920/26/;/^N[TW]/!p'
+```
+
+Explanation:
+
+  * **awk <rsq.txt '{print $2}'**: take **rsq.txt** as input, print
+  the content of 2nd column to **stdout** (the Refseq IDs); **cut
+  -f1** is not used because the columns in **rsq.txt** are not TAB
+  delimited but padded with white spaces.
+  * **sed** command:
+    - **-rn**: use extened regular expression, suppress printing raw
+	content received from **stdin**;
+	- **/\^NC/s/\^NC\_0\*([0-9]\*)[.][0-9]\*/\\1/**: at any line starting
+	with "NC", replace the initial refseq id with non-zero digtis in
+	the accesstion number;
+	- **s/^12920/26/**: replace 12920 with 26, for the mitochondrion;
+	- **s/^N[TW]/!p'**: print lines not starting with "NT" or "NW" to
+      stdout;
+
+The syntax of **sed** seems worked, that the Refseq ID for chromosomes
+were changed to numbers, and non-chromosomes are dropped.
+
+Use the syntax on dbSNP file **GCF_000001405.25.gz**:
+
+  * write the output to bgzip file **GRCh37_SNP153.vcf.gz**;
+  * build random access index for it; 
+  * also extract the header from dbSNP file.
+
+```{sh, eval=FALSE}
+p=$GRP/1kg; cd $p				# project dir
+w=raw/snp;  cd $w				# working dir
+zcat GCF_000001405.25.gz |		# Refseq ID -> CHROM NO.
+    sed -rn '/^NC/s/^NC_0*([0-9]*)[.][0-9]*/\1/; s/^12920/26/; /^N[TW]/!p' |
+    bgzip > GRCh37_SNP153.vcf.gz
+tabix -f GRCh37_SNP153.vcf.gz	# build index
+zcat GRCh37_SNP153.vcf.gz | sed -n '/^##/p; /^#C/q' > GRCh37_SNP153.vcf.hdr
+```
+
+when done
+
+  * converted dbSNP build: __GRCh37_SNP153.vcf.gz__,
+  * random access index: __GRCh37_SNP153.vcf.gz.tbi__,
+  * header of dbSNP build: __GRCh37_SNP153.vcf.hdr__
+  
+should appears under workding directory **{p}/raw/snp**.
+
+
+# Process Genotype
+
+Like the dbSNP file, make sure the downloaded genotype in (VCF format)
+also use numeric chrmosomes. In case of 1000 genome project, the last
+three, X, Y, and MT, must be changed to 23, 24, and 26, respectively.
+
+Remove the INFO fields in the original downloads, since it will soon
+be replaced with new information from the dbSNP build; also remove
+lines begin with "##contig" in the header, they will be automatically
+defined when randomly accessing the processed chromosome files.
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project directory
+w=$p/raw;   cd $w				# working directory
+s=$w/000						# input : original download
+d=$w/001; mkdir -p $d			# output: numbered CHROM, no INFO
+
+# from within the ouput directory:
+ln -sf $s $d/000				# link to the input
+
+for i in {01..26}; do
+    [ -e $s/$i.vcf.gz ] || continue
+    echo -n "bcftools annotate -x INFO 000/$i.vcf.gz | "
+	echo -n "sed '/##contig/d; s/X/23/;s/Y/24/;s/MT/26/' | "
+	echo    "bgzip >$i.vcf.gz"
+    echo "bcftools index -t $i.vcf.gz"
+done > /tmp/cmd.sh
+head -n 2 /tmp/cmd.sh; echo ...; tail -n 2 /tmp/cmd.sh # preview
+# hpcwp /tmp/cmd.sh -d$d -q2 --wtm 2 -m1 --ln $s --log None
+# $d/sub.sh						# submit parallel jobs and wait
+```
+
+Since 1000 genome data is organized by chromosome, create 25 parallel
+jobs with __hpcwp__ to sped up the process.
+
+To run the process in the shell directly, one must go into the output
+directory __{p}/raw/001__ in order to access the link __000__ we just
+created, and use __sh /tmp/cmd.sh__.
+
+
+# Annotation
+
+At this point, both processed 1000 genome files and dbSNP file use
+numbered chromosomes, we are ready to update __ID__ and __INFO__ in
+the former with the later.
+
+Processed dbSNP file is __{p}/raw/snp/$w/snp/GRCh37_SNP153.vcf.gz__,
+along with its index file and previousely extracted hearder; processed
+1000 genome files, by chromosome, are under __{p}/raw/001___.
+
+The annotated output will be put under __{p}/raw/002__.
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project directory
+w=$p/raw;   cd $w				# working directory
+
+a=$w/snp/GRCh37_SNP153.vcf		# base name of processed dbSNP build
+s=$w/001						# directory of processed 1000G data
+
+d=002; mkdir -p $d				# output directory
+ln -sf $a.gz     $d/ann.gz      # link to dbSNP build (the gz file)
+ln -sf $a.gz.tbi $d/ann.gz.tbi  # link to dbSNP build (the index)
+ln -sf $s        $d/001			# link to processed 1000G files
+
+# 1) complete hearder = dbSNP header + 1000 genome chromosom header
+h=$a.hdr                        # dbSNP header
+for c in {01..26}; do
+    [ -e $s/$c.vcf.gz ] || continue # skip non-existing chromosome
+    cp $h $d/$c.hdr
+	zcat $s/$c.vcf.gz | sed -n '/./,/^#CH/p; /^#CH/q' >> $d/$c.hdr
+done
+
+# 2) annotate, re-header, then re-index
+for c in {01..26}; do
+    [ -e $s/$c.vcf.gz ] || continue # skip non-existing chromosome
+    echo -n "bcftools annotate 000/$c.vcf.gz -a ann.gz "
+    echo -n "-x ID,INFO -c ID,INFO -I +'%CHROM\_%POS' | "
+    echo -n "bcftools reheader -h $c.hdr | "
+	echo    "bgzip >$c.vcf.gz"
+    echo    "bcftools index -t $c.vcf.gz"
+done > /tmp/cmd.sh
+head -n 2 /tmp/cmd.sh; echo ...; tail -n 2 /tmp/cmd.sh # preview
+# hpcwp /tmp/cmd.sh -d$d -q2 -m1 -t1 --log None
+# $d/sub.sh
+```
+
+Explanation for the complete header:
+
+  * __cp \$h $d/\$c.hdr__: copy the dbSNP header extracted from previous
+  step (in decompressed VCF format) to the output directory and rename
+  it to __\$c.hdr__ for \$c=01 .. 24, 26;
+  * __zcat $s/\$c.vcf.gz__: decompress 1000G chromosome \$c.vcf.gz, send
+  the content to stdout;
+  * __| sed -n '/./,/^#CH/p; /^#CH/q'__: recieve content from stdin,
+  print everything to stdout until a line starting with "#CH" (which
+  contains table tops and sample ID);
+  * __>> $d/\$c.hdr__: append the content to __\$c.hdr__ copied into the
+  output directory before.
+
+Explanation for the annotation, re-headering, and re-indexing:
+
+  * __bcftools annotate 001/\$c.vcf.gz__: annotate processed 1000G
+    chromosome under $s={p}/raw/001, for \$c=01 .. 24 and 26;
+	- __-a ann.gz__: dbSNP build __{p}/raw/snp/GRCh37_SNP153.vcf.gz__,
+	linked from within the ouput directory as "ann.gz", along with its
+	index "ann.gz.tbi";
+	- __-x ID,INFO -c ID,INFO__: replace ID and INFO fields in the
+	incoming content (a 1000G chromosome) with those in the annotation
+	file linked by __ann.gz__ (that is, the dbSNP build);
+	- __-I +'%CHROM\_%POS'__: for variants lack of an ID in the dbSNP
+	build, use chromosome and basepair position to form an ID;
+	- the output is piped to stdout;
+  * __bcftools reheader -h \$c.hdr__: from stdin, recieve content of an
+  annotated chromosome \$c, update the header with \$c.hdr, for \$c=01
+  .., 24 and 26, and again the ouput is piped to stdout;
+  * __bgzip >\$c.vcf.gz__: compress the annotated, re-headered content,
+  and send the output to __\$c.vcf.gz__ for \$c=01 .. 24, 26.
+  
+Again we use __hpcwp__ to create 25 parallel jobs for PBS or SLURM;
+
+To use the shell directly, go to output directory __{p}/raw/002__ to
+access the links appeared in all commands:
+
+  * ann.gz    : __{p}/raw/snp/GRCh37_SNP153.vcf.gz__;
+  * ann.gz.tbi: __{p}/raw/snp/GRCh37_SNP153.vcf.gz.tbi__;
+  * 001       : __{p}/raw/001__,
+
+and use __sh /tmp/cmd.sh__.
+
+When this is done, annotated chromosome file with updated header
+should appear under the output directory __{p}/raw/002__.
+
+```{sh, eval=TRUE}
+p=$GRP/1kg; cd $p				# project directory
+ls -Llh raw/002/*.gz
+```

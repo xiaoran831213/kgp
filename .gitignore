@@ -1,0 +1,9 @@
+# data directores
+raw/    # raw data (i.e. downloads)
+eur/    # European samples
+
+# linux backups
+*~
+
+# generated html
+src/*.html
